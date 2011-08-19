@@ -24,7 +24,7 @@
 -export([start/0,
         log/7, log/8, log/3, log/4,
         get_loglevel/1, set_loglevel/2, set_loglevel/3, get_loglevels/0,
-        minimum_loglevel/1, posix_error/1]).
+        minimum_loglevel/1, posix_error/1, safe_format/3]).
 
 -type log_level() :: debug | info | notice | warning | error | critical | alert | emergency.
 -type log_level_number() :: 0..7.
@@ -64,7 +64,7 @@ log(Level, Module, Function, Line, Pid, Time, Format, Args) ->
     Timestamp = lager_util:format_time(Time),
     Msg = [["[", atom_to_list(Level), "] "],
         io_lib:format("~p@~p:~p:~p ", [Pid, Module, Function, Line]),
-        string:strip(lists:flatten(io_lib:format(Format, Args)), right, $\n)],
+        string:strip(lists:flatten(safe_format(Format, Args, 4096)), right, $\n)],
     safe_notify(lager_util:level_to_num(Level), Timestamp, Msg).
 
 %% @doc Manually log a message into lager without using the parse transform.
@@ -80,7 +80,7 @@ log(Level, Pid, Message) ->
 log(Level, Pid, Format, Args) ->
     Timestamp = lager_util:format_time(),
     Msg = [["[", atom_to_list(Level), "] "], io_lib:format("~p ", [Pid]),
-        string:strip(lists:flatten(io_lib:format(Format, Args)), right, $\n)],
+        string:strip(lists:flatten(safe_format(Format, Args, 4096)), right, $\n)],
     safe_notify(lager_util:level_to_num(Level), Timestamp, Msg).
 
 %% @doc Set the loglevel for a particular backend.
@@ -137,5 +137,15 @@ safe_notify(Level, Timestamp, Msg) ->
             {error, lager_not_running};
         Pid ->
             gen_event:sync_notify(Pid, {log, Level, Timestamp, Msg})
+    end.
+
+%% @doc Print the format string `Fmt' with `Args' safely with a size limit of
+%% `Limit'. If the format string is invalid, or not enough arguments are supplied
+%% 'FORMAT ERROR' is printed with the offending arguments. The caller is NOT crashed.
+safe_format(Fmt, Args, Limit) ->
+    try lager_trunc_io:format(Fmt, Args, Limit) of
+        Result -> Result
+    catch
+        _:_ -> lager_trunc_io:format("FORMAT ERROR: ~p ~p", [Fmt, Args], Limit)
     end.
 
